@@ -173,70 +173,204 @@ class Config:
 		self.tp_ds, self.tp_cf, self.tp_drizzle = load_tp_data(self.input_dir, self.tp_ds, self.tp_cf, self.tp_drizzle, self.coords, self.chunks)
 		self.mask_ds = load_mask(self.input_dir, self.mask_ds, self.tas_cf, self.coords, self.chunks)
 		
-		# # HACK 
-		self.tas_ds = self.tas_ds.isel(time=slice(0, 100))
-		self.evap_ds = self.evap_ds.isel(time=slice(0, 100))
-		self.tp_ds = self.tp_ds.isel(time=slice(0, 100))
-		# # HACK
-  	
 		self.save_folder = create_output_datasets(self.tas_ds, self.tas_cf, self.save_folder, self.chunks)	
 
 def downscale_tas(config):
-	tas_ds_sub_template = pyinterp.backends.xarray.Grid2D(config.tas_ds.isel(time=0).drop_vars('time'), geodetic=False)
-	mx, my = np.meshgrid(config.tas_cf.longitude.values, config.tas_cf.latitude.values, indexing="ij")
-	mx_ravel, my_ravel= mx.ravel(), my.ravel()
-	_corrected_ds = xr.DataArray(mx, dims=['longitude', 'latitude'],
-									coords=dict(latitude=config.tas_cf.latitude.values,
-												longitude=config.tas_cf.longitude.values))
-	for i, time_step in enumerate(tqdm(config.tas_ds.time.values, desc="Downscaling tas")):
-		tas_ds_sub_template.array[:] = config.tas_ds.sel(time=time_step).values
-		corrected_ds = _corrected_ds.copy()
-		corrected_ds[:] = tas_ds_sub_template.bivariate(coords=dict(longitude=mx_ravel, latitude=my_ravel), num_threads=0).reshape(mx.shape)
-		corrected_ds = corrected_ds.expand_dims(time=[time_step]).to_dataset(name='tas')
-		corrected_ds = xr.where(config.mask_ds.notnull(), corrected_ds, np.nan) + config.tas_cf.sel(time=get_adjusted_day_of_year(time_step))
-		corrected_ds = corrected_ds.chunk(config.chunks)
-		corrected_ds.to_zarr(config.save_folder / 'tas.zarr', mode='a', region={"time": slice(i, i+1), "latitude": slice(None, None), "longitude": slice(None, None)})
+    tas_ds_sub_template = pyinterp.backends.xarray.Grid2D(
+        config.tas_ds.isel(time=0).drop_vars('time'), 
+        geodetic=False
+    )
+    mx, my = np.meshgrid(
+        config.tas_cf.longitude.values, 
+        config.tas_cf.latitude.values, 
+        indexing="ij"
+    )
+    mx_ravel, my_ravel = mx.ravel(), my.ravel()
+    
+    # Template for batch processing
+    _corrected_ds = xr.DataArray(
+        mx, 
+        dims=['longitude', 'latitude'],
+        coords=dict(
+            latitude=config.tas_cf.latitude.values,
+            longitude=config.tas_cf.longitude.values
+        )
+    )
+    
+    time_values = config.tas_ds.time.values
+    batch_size = 48
+    
+    # Process in batches
+    for batch_start in tqdm(range(0, len(time_values), batch_size), desc="Downscaling tas (batches of 96)"):
+        batch_end = min(batch_start + batch_size, len(time_values))
+        batch_times = time_values[batch_start:batch_end]
+        
+        batch_results = []
+        
+        for time_step in batch_times:
+            tas_ds_sub_template.array[:] = config.tas_ds.sel(time=time_step).values
+            
+            corrected_ds = _corrected_ds.copy()
+            corrected_ds[:] = tas_ds_sub_template.bivariate(
+                coords=dict(longitude=mx_ravel, latitude=my_ravel), 
+                num_threads=2
+            ).reshape(mx.shape)
+            
+            corrected_ds = corrected_ds.expand_dims(time=[time_step]).to_dataset(name='tas')
+            corrected_ds = xr.where(
+                config.mask_ds.notnull(), 
+                corrected_ds, 
+                np.nan
+            ) + config.tas_cf.sel(time=get_adjusted_day_of_year(time_step))
+            
+            batch_results.append(corrected_ds)
+        
+        batch_ds = xr.concat(batch_results, dim='time')
+        batch_ds = batch_ds.chunk(config.chunks)
+        
+        batch_ds.to_zarr(
+            config.save_folder / 'tas.zarr', 
+            mode='a', 
+            region={
+                "time": slice(batch_start, batch_end), 
+                "latitude": slice(None, None), 
+                "longitude": slice(None, None)
+            }
+        )
+
 
 def downscale_evap(config):
-	evap_ds_sub_template = pyinterp.backends.xarray.Grid2D(config.evap_ds.isel(time=0).drop_vars('time'), geodetic=False)
-	mx, my = np.meshgrid(config.evap_cf.longitude.values, config.evap_cf.latitude.values, indexing="ij")
-	mx_ravel, my_ravel = mx.ravel(), my.ravel()
-	_corrected_ds = xr.DataArray(mx, dims=['longitude', 'latitude'],
-									coords=dict(latitude=config.evap_cf.latitude.values,
-												longitude=config.evap_cf.longitude.values))
-	for i, time_step in enumerate(tqdm(config.evap_ds.time.values, desc="Downscaling evap")):
-		evap_ds_sub_template.array[:] = config.evap_ds.sel(time=time_step).values
-		corrected_evap = _corrected_ds.copy()
-		corrected_evap[:] = evap_ds_sub_template.bivariate(coords=dict(longitude=mx_ravel, latitude=my_ravel), num_threads=0).reshape(mx.shape)
-		corrected_evap = corrected_evap.expand_dims(time=[time_step]).to_dataset(name='evap')
-		corrected_evap = xr.where(config.mask_ds.notnull(), corrected_evap, np.nan) + config.evap_cf.sel(time=get_adjusted_day_of_year(time_step))
-		corrected_evap = corrected_evap.chunk(config.chunks)
-		corrected_evap.to_zarr(config.save_folder / 'evap.zarr', mode='a', region={"time": slice(i, i+1), "latitude": slice(None, None), "longitude": slice(None, None)})
+    evap_ds_sub_template = pyinterp.backends.xarray.Grid2D(
+        config.evap_ds.isel(time=0).drop_vars('time'), 
+        geodetic=False
+    )
+    mx, my = np.meshgrid(
+        config.evap_cf.longitude.values, 
+        config.evap_cf.latitude.values, 
+        indexing="ij"
+    )
+    mx_ravel, my_ravel = mx.ravel(), my.ravel()
+    
+    _corrected_ds = xr.DataArray(
+        mx, 
+        dims=['longitude', 'latitude'],
+        coords=dict(
+            latitude=config.evap_cf.latitude.values,
+            longitude=config.evap_cf.longitude.values
+        )
+    )
+    
+    time_values = config.evap_ds.time.values
+    batch_size = 48
+    
+    for batch_start in tqdm(range(0, len(time_values), batch_size), desc="Downscaling evap (batches of 96)"):
+        batch_end = min(batch_start + batch_size, len(time_values))
+        batch_times = time_values[batch_start:batch_end]
+        
+        batch_results = []
+        
+        for time_step in batch_times:
+            evap_ds_sub_template.array[:] = config.evap_ds.sel(time=time_step).values
+            
+            corrected_evap = _corrected_ds.copy()
+            corrected_evap[:] = evap_ds_sub_template.bivariate(
+                coords=dict(longitude=mx_ravel, latitude=my_ravel), 
+                num_threads=2
+            ).reshape(mx.shape)
+            
+            corrected_evap = corrected_evap.expand_dims(time=[time_step]).to_dataset(name='evap')
+            corrected_evap = xr.where(
+                config.mask_ds.notnull(), 
+                corrected_evap, 
+                np.nan
+            ) * config.evap_cf.sel(time=get_adjusted_day_of_year(time_step))
+            corrected_evap = corrected_evap * 1000.0  # Convert from m/day to mm/day
+            
+            batch_results.append(corrected_evap)
+        
+        batch_ds = xr.concat(batch_results, dim='time')
+        batch_ds = batch_ds.chunk(config.chunks)
+        
+        batch_ds.to_zarr(
+            config.save_folder / 'evap.zarr', 
+            mode='a', 
+            region={
+                "time": slice(batch_start, batch_end), 
+                "latitude": slice(None, None), 
+                "longitude": slice(None, None)
+            }
+        )
+
 
 def downscale_tp(config):
-	tp_ds_sub_template = pyinterp.backends.xarray.Grid2D(config.tp_ds.isel(time=0).drop_vars('time'), geodetic=False)
-	mx, my = np.meshgrid(config.tp_cf.longitude.values, config.tp_cf.latitude.values, indexing="ij")
-	mx_ravel, my_ravel = mx.ravel(), my.ravel()
-	_corrected_tp = xr.DataArray(mx, dims=['longitude', 'latitude'],
-									coords=dict(latitude=config.tp_cf.latitude.values,
-												longitude=config.tp_cf.longitude.values))
-	for i, time_step in enumerate(tqdm(config.tp_ds.time.values, desc="Downscaling tp")):
-		tp_ds_sub_template.array[:] = config.tp_ds.sel(time=time_step).values
-		corrected_tp = _corrected_tp.copy()
-		corrected_tp[:] = tp_ds_sub_template.bivariate(coords=dict(longitude=mx_ravel, latitude=my_ravel), num_threads=0).reshape(mx.shape)
-		corrected_tp = corrected_tp.expand_dims(time=[time_step]).to_dataset(name='tp')
-		corrected_tp = xr.where(corrected_tp > config.tp_drizzle.sel(time=get_month_of_year(time_step)).drop_vars('time'), corrected_tp, 0.0)
-		corrected_tp = corrected_tp * config.tp_cf.sel(time=get_adjusted_day_of_year(time_step)).drop_vars('time')
-		corrected_tp = xr.where(config.mask_ds.notnull(), corrected_tp, np.nan)
-		corrected_tp = corrected_tp.chunk(config.chunks)
-		corrected_tp.to_zarr(config.save_folder / 'tp.zarr', mode='a', region={"time": slice(i, i+1), "latitude": slice(None, None), "longitude": slice(None, None)})
-
+    tp_ds_sub_template = pyinterp.backends.xarray.Grid2D(
+        config.tp_ds.isel(time=0).drop_vars('time'), 
+        geodetic=False
+    )
+    mx, my = np.meshgrid(
+        config.tp_cf.longitude.values, 
+        config.tp_cf.latitude.values, 
+        indexing="ij"
+    )
+    mx_ravel, my_ravel = mx.ravel(), my.ravel()
+    
+    _corrected_tp = xr.DataArray(
+        mx, 
+        dims=['longitude', 'latitude'],
+        coords=dict(
+            latitude=config.tp_cf.latitude.values,
+            longitude=config.tp_cf.longitude.values
+        )
+    )
+    
+    time_values = config.tp_ds.time.values
+    batch_size = 48
+    
+    for batch_start in tqdm(range(0, len(time_values), batch_size), desc="Downscaling tp (batches of 96)"):
+        batch_end = min(batch_start + batch_size, len(time_values))
+        batch_times = time_values[batch_start:batch_end]
+        
+        batch_results = []
+        
+        for time_step in batch_times:
+            tp_ds_sub_template.array[:] = config.tp_ds.sel(time=time_step).values
+            
+            corrected_tp = _corrected_tp.copy()
+            corrected_tp[:] = tp_ds_sub_template.bivariate(
+                coords=dict(longitude=mx_ravel, latitude=my_ravel), 
+                num_threads=2
+            ).reshape(mx.shape)
+            
+            corrected_tp = corrected_tp.expand_dims(time=[time_step]).to_dataset(name='tp')
+            
+            corrected_tp = xr.where(
+                corrected_tp > config.tp_drizzle.sel(time=get_month_of_year(time_step)).drop_vars('time'), 
+                corrected_tp, 
+                0.0
+            )
+            corrected_tp = corrected_tp * config.tp_cf.sel(time=get_adjusted_day_of_year(time_step)).drop_vars('time')
+            corrected_tp = xr.where(config.mask_ds.notnull(), corrected_tp, np.nan)
+            
+            batch_results.append(corrected_tp)
+        
+        batch_ds = xr.concat(batch_results, dim='time')
+        batch_ds = batch_ds.chunk(config.chunks)
+        
+        batch_ds.to_zarr(
+            config.save_folder / 'tp.zarr', 
+            mode='a', 
+            region={
+                "time": slice(batch_start, batch_end), 
+                "latitude": slice(None, None), 
+                "longitude": slice(None, None)
+            }
+        )
 start_time = time.time()
 config = Config(input_dir="/scratch/depfg/7006713/temp/1km_forcing/input",
 				save_folder='/scratch/depfg/7006713/temp/1km_forcing/output',
     			chunks={'time': 1, 'latitude': 21600, 'longitude': 450},
     
-				coords={"latitude": slice(-33.6, -35.0), "longitude": slice(18.0, 20.0)},
+				coords={"latitude": slice(14, 1.0), "longitude": slice(8, 17)},
         
 				mask_ds='gwStorage.nc',
             

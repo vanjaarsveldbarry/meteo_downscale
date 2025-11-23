@@ -137,8 +137,7 @@ def plot_interactive_timeseries(
     width=600, 
     height=500,
     rasterize=True,
-    display=False
-):
+    display=False):
     # 1. Use .hvplot() with the 'groupby' argument
     # The 'groupby' parameter automatically creates a widget (slider) for the specified dimension.
 	import xarray as xr
@@ -164,18 +163,31 @@ def plot_interactive_timeseries(
 		dynamic=False  # Pre-computes all frames for a smooth slider experience
 			)
 
-	if display:
-		# To display in a script or new tab, wrap it in a Panel layout and call .show()
-		pn.Column(interactive_plot).show()
+	# if display:
+	# 	# To display in a script or new tab, wrap it in a Panel layout and call .show()
+	# 	pn.Column(interactive_plot).show()
 
 	return interactive_plot
 
 input_dir=Path('/scratch/depfg/7006713/temp/1km_forcing/input')
 save_folder=Path('/scratch/depfg/7006713/temp/1km_forcing/output')
 
-original = xr.open_dataset(input_dir / 'forcing/W5E5/tas_W5E5v2.0_19790101-20191231.nc')['tas'].sel({"lat": slice(-33.6, -35.0), "lon": slice(18.0, 20.0)}).rename({'lat':'latitude', 'lon':'longitude'})
-downscaled = xr.open_zarr(save_folder / 'tas.zarr')['tas']
 
-# plot_interactive_timeseries(original) # Single map with time slider
-plot_side_by_side(original.isel(time=0), downscaled.isel(time=0), title1='Original', title2='Downscaled') # Side by Side comparison
+downscaled = xr.open_zarr(save_folder / 'evap.zarr', chunks={})['evap'].isel(time=slice(0, 731))
+downscaled = downscaled.mean('time').compute()
+
+lat_min = float(downscaled.latitude.min())
+lat_max = float(downscaled.latitude.max())
+lon_min = float(downscaled.longitude.min())
+lon_max = float(downscaled.longitude.max())
+
+# crop original to the spatial bounds of the downscaled product
+orig_ds = xr.open_dataset(input_dir / 'forcing/W5E5/refPotEvap_W5E5v2.0_1979_2019.nc')['PM_FAO_56']
+orig_ds = orig_ds.isel(time=slice(0, 731)).rename({'lat':'latitude', 'lon':'longitude'})
+orig_ds = orig_ds.sel(latitude=slice(lat_max, lat_min), longitude=slice(lon_min, lon_max))
+orig_ds = orig_ds.mean('time').compute()
+print(orig_ds)
+print(downscaled)
+# plot_interactive_timeseries(downscaled) # Single map with time slider
+plot_side_by_side(orig_ds, downscaled, title1='Original', title2='Downscaled')
 # %%
