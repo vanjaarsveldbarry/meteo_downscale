@@ -173,21 +173,6 @@ class Config:
 		self.tp_ds, self.tp_cf, self.tp_drizzle = load_tp_data(self.input_dir, self.tp_ds, self.tp_cf, self.tp_drizzle, self.coords, self.chunks)
 		self.mask_ds = load_mask(self.input_dir, self.mask_ds, self.tas_cf, self.coords, self.chunks)
 		
-		# # HACK 
-		self.tas_ds = self.tas_ds.sel(time=slice('1990-01-01', '2019-12-31'))
-		self.evap_ds = self.evap_ds.sel(time=slice('1990-01-01', '2019-12-31'))
-		self.tp_ds = self.tp_ds.sel(time=slice('1990-01-01', '2019-12-31'))
-  
-		# self.tas_ds = self.tas_ds.sel(time=slice('1990-01-01', '1990-12-31'))
-		# self.evap_ds = self.evap_ds.sel(time=slice('1990-01-01', '1990-12-31'))
-		# self.tp_ds = self.tp_ds.sel(time=slice('1990-01-01', '1990-12-31'))
-
-		# self.tas_ds = self.tas_ds.sel(time=slice('1990-01-01', '1990-01-31'))
-		# self.evap_ds = self.evap_ds.sel(time=slice('1990-01-01', '1990-01-31'))
-		# self.tp_ds = self.tp_ds.sel(time=slice('1990-01-01', '1990-01-31'))
-		
-  		# # HACK
-  	
 		self.save_folder = create_output_datasets(self.tas_ds, self.tas_cf, self.save_folder, self.chunks)	
 
 def downscale_tas(config):
