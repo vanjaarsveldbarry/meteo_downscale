@@ -401,10 +401,3 @@ start_time = time.time()
 corrected_tp = downscale_tp(config)
 end_time = time.time()
 print(f"🌧️ Precip {end_time - start_time:.2f} seconds")
-
-
-for file in ['tas', 'evap', 'tp']:
-	ds = xr.open_zarr(config.save_folder / f'{file}.zarr')
-	ds = ds.transpose('latitude', 'longitude', 'time')
-	ds = ds.compute()
-	ds.to_netcdf(config.save_folder / f'{file}_1990_2019.nc')
